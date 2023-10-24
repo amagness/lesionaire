@@ -117,11 +117,7 @@ def plot_clusters_pub_proportional(clustered_df,
     plt.close()
 
 
-import re
-import matplotlib.pyplot as plt
-import alphashape
-from descartes import PolygonPatch
-from shapely.geometry import MultiPolygon, Point, Polygon
+
 
 def assign_condition(mouseID):
     mouse_n = int(re.findall(r'\d+', mouseID)[0])

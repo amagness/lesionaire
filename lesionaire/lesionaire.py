@@ -1,95 +1,26 @@
 import sys
 
-sys.path.append('./')
 import argparse
 import glob
 import os
-import sys
+
+import alphashape
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from lesionaire.plots import plot_clusters_pub_proportional
-
+import seaborn as sns
+from descartes import PolygonPatch
 from sklearn.cluster import DBSCAN
 from tqdm import *
-import alphashape
-from descartes import PolygonPatch
-from shapely.geometry import MultiPolygon, Point, Polygon
-import seaborn as sns
-import matplotlib.pyplot as plt
 
-sys.path.append("../")
+sys.path.append('./')
+from lesionaire.plots import plot_clusters_pub_proportional
 
 
-
-########################
-# FUNCTION DEFINITIONS #
-########################
-
-def do_clustering(cell_type_df, eps_param, x_id_col, y_id_col,min_samples=1):
-    """
-    Performs DBSCAN clustering given a cell typing dataframe and returns list of labels of clusters that each cell belongs to.
-    """
-
-    n_cells = len(cell_type_df.index)
-    print('n_cells = ', n_cells)
-
-    # reset index so iteration on cell type df works:
-    cell_type_df = cell_type_df.reset_index()
-
-    # create list of X,Y positions in [[X0,Y0], [X1,Y1]...[Xi,Yi]] format for clustering:
-    cell_positions = []
-    for i in range(n_cells):
-        cell_positions.append([cell_type_df[x_id_col][i], cell_type_df[y_id_col][i]])
-
-    # perform DBSCAN clustering:
-    clustering = DBSCAN(eps=eps_param, min_samples=min_samples).fit(cell_positions)
-    labels = clustering.labels_
-    return labels
-
-def df_select(df, cat, val):
-    return df[df[cat]==val]
-
-def process(data, image_id_col, x_id_col, y_id_col, clustering_id_col, 
-            cluster_class = 'Positive', cluster_eps = 35, whole_lung_eps = 1000, min_s = 1):
-    
-    # read lobe data
-
-    clustered_dfs = []
-
-    
-
-    for imagename in data[image_id_col].unique():
-        
-        # define empty dataframe for images with no clusters:
-        no_cluster_df = pd.DataFrame(data={'Image': [imagename],'lesion_id':[-1],'cell_count':[0]})
-
-        image_data = df_select(data, image_id_col, imagename)
-
-        if len(image_data) > 1: # only proceed if there is more than one cell in the image
-            positive_data = df_select(image_data,  clustering_id_col, cluster_class)
-            positive_data = positive_data.reset_index(drop=True)
-
-            if len(positive_data.index) > 0: # only proceed if there are positive cells in the image
-                labels = do_clustering(positive_data, cluster_eps, x_id_col, y_id_col, min_samples=min_s)
-                positive_data.loc[:,'lesion_id'] = labels
-                cluster_label, cluster_size = np.unique(labels, return_counts=True)
-                cluster_id_df = pd.DataFrame(data=zip(cluster_label, cluster_size), columns = ["Cluster ID", "Cluster N cells"])
-                merged = pd.merge(positive_data, cluster_id_df, how='left', left_on='lesion_id', right_on='Cluster ID')
-                clustered_dfs.append(merged)
-            else:
-                print(f'Image {imagename} has no {cluster_class} cells, skipping...')
-                clustered_dfs.append(no_cluster_df)
-
-        else:
-            print(f'Image {imagename} has only one cell, skipping...')
-            clustered_dfs.append(no_cluster_df)
-
-    clustered_data = pd.concat(clustered_dfs)
-
-    return clustered_data
 
 class lesionData:
-    """_summary_
+    """
+    The lesionaire lesionData class.
     """
 
     def __init__(self,data, x_id_col, y_id_col, clustering_id_col, class_id, image_id_col=None, lobe_id_col = None) -> None:
@@ -108,7 +39,7 @@ class lesionData:
         self.cluster_alpha = 0.05
         self.tissue_alpha = 0.05
         self.min_s = 1
-        self.plot_outdir = './plots'
+        self.lesion_plot_cutoff = 5 # clusters with less than this number of cells will be plotted as gray points
 
     def find_lesions(self):
         """Find lesions with density-based clustering (DBSCAN).
@@ -122,7 +53,7 @@ class lesionData:
     def get_lesions(self):
         return self.lesions
     
-    def cell_counts(self):
+    def cell_counts_per_lesion(self):
         if self.lobe_id_col:
             self.counts = self.lesions.groupby([self.image_id_col,self.lobe_id_col,'lesion_id']).size().reset_index(name='cell_count')
         else:
@@ -134,7 +65,7 @@ class lesionData:
     
     def summary(self):
 
-        self.summary = self.cell_counts().groupby(self.image_id_col).agg({'cell_count':['mean','std','count']})
+        self.summary = self.cell_counts_per_lesion().groupby(self.image_id_col).agg({'cell_count':['mean','std','count']})
         self.summary.columns = ['_'.join(col).strip() for col in self.summary.columns.values]
         self.summary = self.summary.reset_index()
 
@@ -155,7 +86,7 @@ class lesionData:
         '''
 
         # create alphashape:
-        print('Calculating alphashape...')
+        print('Calculating alphashape tissue boundary...')
         points = self.data[[self.x_id_col, self.y_id_col]].values
         self.tissue_boundary = alphashape.alphashape(points, self.tissue_alpha)
         self.tissue_area = self.tissue_boundary.area
@@ -165,19 +96,9 @@ class lesionData:
     def plot_lesions(self):
 
         """
-        Plots spatial clusters of cells with an alphashape pertaining to each spatial cluster. 
-        Counts all other cell types which lie within alphashape and outputs dataframe.
-
-        args:
-            clustered_df: dataframe of clustered cells
-            allcells: dataframe of all cells
-            self.x_id_col: column name of x coordinates
-            self.y_id_col: column name of y coordinates
-            image_shape: shape of image
+        Plots identified lesions with an alphashape pertaining to each lesion over the background tissue. 
 
         """
-        if os.path.exists(self.plot_outdir) != True:
-            os.makedirs(self.plot_outdir)
 
         sns.set_style('white')
         
@@ -186,9 +107,6 @@ class lesionData:
             self.get_tissue_boundary()
 
         image_shape = (self.data[self.y_id_col].max(), self.data[self.x_id_col].max())
-        
-        # number of cells to split small and large clusters:
-        cutoff = 5
 
         # create figure:
         scale = 5e-3
@@ -197,12 +115,12 @@ class lesionData:
         # plot lung:
         ax.add_patch(PolygonPatch(self.tissue_boundary, alpha=0.3)).set(facecolor='#f0b9e7', edgecolor='k')
             
-        ## plot small clusters (<5 cells) as grey:
-        small_clusters = self.lesions[self.lesions['Cluster N cells'] < cutoff]
+        ## plot small clusters (<5 cutoff) as grey:
+        small_clusters = self.lesions[self.lesions['Cluster N cells'] < self.lesion_plot_cutoff]
         ax.scatter(small_clusters[self.x_id_col].values, small_clusters[self.y_id_col].values, alpha=0.1, color='k', s=small_clusters['Cluster N cells'].values*250)
         ax.scatter(small_clusters[self.x_id_col].values, small_clusters[self.y_id_col].values, alpha=1, s=1, color='k')
 
-        large_clusters = self.lesions[self.lesions['Cluster N cells'] >= cutoff]
+        large_clusters = self.lesions[self.lesions['Cluster N cells'] >= self.lesion_plot_cutoff]
 
         # get unique cluster labels:
         unique_cluster_labels = large_clusters['Cluster ID'].unique()
@@ -255,6 +173,70 @@ class lesionData:
         # plt.close()
 
         return fig
+
+
+
+########################
+# FUNCTION DEFINITIONS #
+########################
+
+def do_clustering(cell_type_df, eps_param, x_id_col, y_id_col,min_samples=1):
+    """
+    Performs DBSCAN clustering given a cell typing dataframe and returns list of labels of clusters that each cell belongs to.
+    """
+
+    n_cells = len(cell_type_df.index)
+    print('n_cells = ', n_cells)
+
+    # reset index so iteration on cell type df works:
+    cell_type_df = cell_type_df.reset_index()
+    cell_positions = cell_type_df[[x_id_col, y_id_col]].values.tolist()
+
+    # perform DBSCAN clustering:
+    clustering = DBSCAN(eps=eps_param, min_samples=min_samples).fit(cell_positions)
+
+    return clustering.labels_
+
+def df_select(df, cat, val):
+    return df[df[cat]==val]
+
+def process(data, image_id_col, x_id_col, y_id_col, clustering_id_col, 
+            cluster_class = 'Positive', cluster_eps = 35, min_s = 1):
+    
+    # read lobe data
+
+    clustered_dfs = []
+
+    for imagename in data[image_id_col].unique():
+        
+        # define empty dataframe for images with no clusters:
+        no_cluster_df = pd.DataFrame(data={'Image': [imagename],'lesion_id':[-1],'cell_count':[0]})
+
+        image_data = df_select(data, image_id_col, imagename)
+
+        if len(image_data) > 1: # only proceed if there is more than one cell in the image
+            positive_data = df_select(image_data,  clustering_id_col, cluster_class)
+            positive_data = positive_data.reset_index(drop=True)
+
+            if len(positive_data.index) > 0: # only proceed if there are positive cells in the image
+                labels = do_clustering(positive_data, cluster_eps, x_id_col, y_id_col, min_samples=min_s)
+                positive_data.loc[:,'lesion_id'] = labels
+                cluster_label, cluster_size = np.unique(labels, return_counts=True)
+                cluster_id_df = pd.DataFrame(data=zip(cluster_label, cluster_size), columns = ["Cluster ID", "Cluster N cells"])
+                merged = pd.merge(positive_data, cluster_id_df, how='left', left_on='lesion_id', right_on='Cluster ID')
+                clustered_dfs.append(merged)
+            else:
+                print(f'Image {imagename} has no {cluster_class} cells, skipping...')
+                clustered_dfs.append(no_cluster_df)
+
+        else:
+            print(f'Image {imagename} has only one cell, skipping...')
+            clustered_dfs.append(no_cluster_df)
+
+    clustered_data = pd.concat(clustered_dfs)
+
+    return clustered_data
+
 
 
 def measure_lesions(data, image_id_col, x_id_col, y_id_col, clustering_id_col, class_id, plot = False, outdir = './plots', sample_name = 'sample'):

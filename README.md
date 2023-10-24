@@ -35,10 +35,9 @@
 <p align="center">
   <a href="#dart-about">About</a> &#xa0; | &#xa0; 
   <a href="#sparkles-features">Features</a> &#xa0; | &#xa0;
-  <a href="#rocket-technologies">Technologies</a> &#xa0; | &#xa0;
   <a href="#white_check_mark-requirements">Requirements</a> &#xa0; | &#xa0;
-  <a href="#checkered_flag-starting">Starting</a> &#xa0; | &#xa0;
-  <a href="#memo-license">License</a> &#xa0; | &#xa0;
+  <a href="#starting">Starting</a> &#xa0; | &#xa0;
+  <a href="#license">License</a> &#xa0; | &#xa0;
   <a href="https://github.com/amagness" target="_blank">Author</a>
 </p>
 
@@ -68,7 +67,7 @@ descartes
 shapely
 ```
 
-## :checkered_flag: Getting started ##
+## Getting started ##
 
 ```bash
 # Clone this project
@@ -76,12 +75,30 @@ $ git clone https://github.com/amagness/lesionaire
 
 ```
 
-## :memo: License ##
+## Usage ##
+
+```python
+data = pd.read_csv('../data/test_data.txt', sep='\t')
+
+L = lesionData(data = data,
+                image_id_col = 'Image',
+                x_id_col = 'Centroid X µm',
+                y_id_col = 'Centroid Y µm',
+                clustering_id_col = 'Class',
+                class_id = 'Positive')
+
+L.find_lesions()
+
+lesion_fig = L.plot_lesions()
+lesion_fig.savefig('./plots/lesion_fig.png')
+```
+
+## License ##
 
 This project is under license from MIT. For more details, see the [LICENSE](LICENSE.md) file.
 
 
-Made with :heart: by <a href="https://github.com/amagness" target="_blank">{{YOUR_NAME}}</a>
+Made with :heart: by <a href="https://github.com/amagness" target="_blank">Alastair Magness</a> at the Francis Crick Institute.
 
 &#xa0;
 
