@@ -68,22 +68,12 @@ descartes
 shapely
 ```
 
-## :checkered_flag: Starting ##
+## :checkered_flag: Getting started ##
 
 ```bash
 # Clone this project
 $ git clone https://github.com/amagness/lesionaire
 
-# Access
-$ cd lesionaire
-
-# Install dependencies
-$ yarn
-
-# Run the project
-$ yarn start
-
-# The server will initialize in the <http://localhost:3000>
 ```
 
 ## :memo: License ##

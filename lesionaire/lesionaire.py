@@ -11,6 +11,11 @@ from lesionaire.plots import plot_clusters_pub_proportional
 
 from sklearn.cluster import DBSCAN
 from tqdm import *
+import alphashape
+from descartes import PolygonPatch
+from shapely.geometry import MultiPolygon, Point, Polygon
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 sys.path.append("../")
 
@@ -20,7 +25,7 @@ sys.path.append("../")
 # FUNCTION DEFINITIONS #
 ########################
 
-def do_clustering(cell_type_df, eps_param, xcoord_ref, ycoord_ref,min_samples=1):
+def do_clustering(cell_type_df, eps_param, x_id_col, y_id_col,min_samples=1):
     """
     Performs DBSCAN clustering given a cell typing dataframe and returns list of labels of clusters that each cell belongs to.
     """
@@ -34,7 +39,7 @@ def do_clustering(cell_type_df, eps_param, xcoord_ref, ycoord_ref,min_samples=1)
     # create list of X,Y positions in [[X0,Y0], [X1,Y1]...[Xi,Yi]] format for clustering:
     cell_positions = []
     for i in range(n_cells):
-        cell_positions.append([cell_type_df[xcoord_ref][i], cell_type_df[ycoord_ref][i]])
+        cell_positions.append([cell_type_df[x_id_col][i], cell_type_df[y_id_col][i]])
 
     # perform DBSCAN clustering:
     clustering = DBSCAN(eps=eps_param, min_samples=min_samples).fit(cell_positions)
@@ -83,7 +88,7 @@ def process(data, image_id_col, x_id_col, y_id_col, clustering_id_col,
 
     return clustered_data
 
-class lesions:
+class lesionData:
     """_summary_
     """
 
@@ -101,8 +106,9 @@ class lesions:
         self.class_id = class_id
         self.cluster_eps = 35
         self.cluster_alpha = 0.05
-        self.lung_alpha = 0.05
+        self.tissue_alpha = 0.05
         self.min_s = 1
+        self.plot_outdir = './plots'
 
     def find_lesions(self):
         """Find lesions with density-based clustering (DBSCAN).
@@ -110,24 +116,148 @@ class lesions:
         Returns:
             pd.DataFrame: Original data with lesion ID column added.
         """
-        self.data = process(self.data, self.image_id_col, self.x_id_col, self.y_id_col, self.clustering_id_col, 
+        self.lesions = process(self.data, self.image_id_col, self.x_id_col, self.y_id_col, self.clustering_id_col, 
             cluster_class = self.class_id, cluster_eps = self.cluster_eps, min_s = self.min_s)
-        return self.data
+    
+    def get_lesions(self):
+        return self.lesions
     
     def cell_counts(self):
         if self.lobe_id_col:
-            self.counts = self.data.groupby([self.image_id_col,self.lobe_id_col,'lesion_id']).size().reset_index(name='cell_count')
+            self.counts = self.lesions.groupby([self.image_id_col,self.lobe_id_col,'lesion_id']).size().reset_index(name='cell_count')
         else:
-            self.counts = self.data.groupby([self.image_id_col,'lesion_id']).size().reset_index(name='cell_count')
+            self.counts = self.lesions.groupby([self.image_id_col,'lesion_id']).size().reset_index(name='cell_count')
         return self.counts
     
+    # def count_lesions(self):
+
+    
     def summary(self):
+
         self.summary = self.cell_counts().groupby(self.image_id_col).agg({'cell_count':['mean','std','count']})
         self.summary.columns = ['_'.join(col).strip() for col in self.summary.columns.values]
         self.summary = self.summary.reset_index()
-        return self.summary
 
-def measure_lesions(data, image_id_col, x_id_col, y_id_col, clustering_id_col, class_id, plot = False, outdir = './plots'):
+        # check if class has tissue area attribute:
+        if not hasattr(self, 'tissue_area'):
+            self.get_tissue_boundary()
+
+        self.summary['tissue_area'] = self.tissue_area
+        self.summary['total_cell_area'] = self.data['Cell: Area'].sum()
+        self.summary['total_lesions'] = len(self.summary)
+        self.summary['lesions_per_unit_lobe_area'] = (self.summary['total_lesions'][0] / self.summary['tissue_area'][0]) * 1e6
+        self.summary['lesions_per_unit_cell_area'] = (self.summary['total_lesions'][0] / self.summary['total_cell_area'][0]) * 1e6
+        return self.summary
+    
+    def get_tissue_boundary(self):
+        '''
+        Function to calculate the area of a set of points with the alpha shape algorithm.
+        '''
+
+        # create alphashape:
+        print('Calculating alphashape...')
+        points = self.data[[self.x_id_col, self.y_id_col]].values
+        self.tissue_boundary = alphashape.alphashape(points, self.tissue_alpha)
+        self.tissue_area = self.tissue_boundary.area
+        print('Done.')
+        return self.tissue_boundary
+    
+    def plot_lesions(self):
+
+        """
+        Plots spatial clusters of cells with an alphashape pertaining to each spatial cluster. 
+        Counts all other cell types which lie within alphashape and outputs dataframe.
+
+        args:
+            clustered_df: dataframe of clustered cells
+            allcells: dataframe of all cells
+            self.x_id_col: column name of x coordinates
+            self.y_id_col: column name of y coordinates
+            image_shape: shape of image
+
+        """
+        if os.path.exists(self.plot_outdir) != True:
+            os.makedirs(self.plot_outdir)
+
+        sns.set_style('white')
+        
+        ## make alphashape and plot outline of lung
+        if not hasattr(self, 'tissue_boundary'):
+            self.get_tissue_boundary()
+
+        image_shape = (self.data[self.y_id_col].max(), self.data[self.x_id_col].max())
+        
+        # number of cells to split small and large clusters:
+        cutoff = 5
+
+        # create figure:
+        scale = 5e-3
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize = (image_shape[1]*scale,image_shape[0]*scale))
+        
+        # plot lung:
+        ax.add_patch(PolygonPatch(self.tissue_boundary, alpha=0.3)).set(facecolor='#f0b9e7', edgecolor='k')
+            
+        ## plot small clusters (<5 cells) as grey:
+        small_clusters = self.lesions[self.lesions['Cluster N cells'] < cutoff]
+        ax.scatter(small_clusters[self.x_id_col].values, small_clusters[self.y_id_col].values, alpha=0.1, color='k', s=small_clusters['Cluster N cells'].values*250)
+        ax.scatter(small_clusters[self.x_id_col].values, small_clusters[self.y_id_col].values, alpha=1, s=1, color='k')
+
+        large_clusters = self.lesions[self.lesions['Cluster N cells'] >= cutoff]
+
+        # get unique cluster labels:
+        unique_cluster_labels = large_clusters['Cluster ID'].unique()
+
+        # loop through labels:
+        for label in unique_cluster_labels:
+
+            # get df for each unique label:
+            cluster_df = large_clusters[large_clusters['lesion_id'] == label]
+
+            # get points of cluster:     
+            points = cluster_df[[self.x_id_col, self.y_id_col]].values
+
+            # only proceed if cells exist:
+            if len(points.tolist()) > 0:
+
+                if label == -1:
+                    ax.scatter(cluster_df[self.x_id_col].values, cluster_df[self.y_id_col].values, alpha=0.75, color='k', s=50)
+
+                else:
+                    # create alphashape:
+                    alpha_shape = alphashape.alphashape(points, self.cluster_alpha)
+
+                    if alpha_shape.geom_type in ['Polygon', 'MultiPolygon']: # only process Polygon and Multipolygons i.e. ignore lines of cells which cannot contain other cells
+
+                        # plot points and add patch of alphashape:
+                        ax.scatter(cluster_df[self.x_id_col].values, cluster_df[self.y_id_col].values, s=cluster_df['Cluster N cells'].values*250, alpha=0.05)
+                        ax.scatter(cluster_df[self.x_id_col].values, cluster_df[self.y_id_col].values, alpha=1, s=1, color='k')
+                        ax.add_patch(PolygonPatch(alpha_shape, alpha=0.3)).set(facecolor='k', edgecolor='w')
+                    else:
+                        ax.scatter(cluster_df[self.x_id_col].values, cluster_df[self.y_id_col].values, alpha=0.1, color='k', s=150)
+                        ax.scatter(cluster_df[self.x_id_col].values, cluster_df[self.y_id_col].values, alpha=1, color='k', s=1)
+
+        # update plot with title etc and save:
+        # title = '{}_{}_alpha_{}.png'.format(self.sample_name, self.class_id, self.cluster_alpha)
+        ax.set_xlabel('Cell position X µm', fontsize=75)
+        ax.set_ylabel('Cell position Y µm', fontsize=75)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['bottom'].set_linewidth(10)
+        ax.spines['left'].set_linewidth(10)
+        
+        # We change the fontsize of minor ticks label 
+        ax.tick_params(axis='both', which='major', labelsize=50)
+        ax.tick_params(axis='both', which='minor', labelsize=50)
+
+        plt.show()
+        # #     plt.show()
+        # plt.savefig('{}/{}_{}_alpha_{}.png'.format(self.plot_outdir, self.sample_name, self.class_id, self.cluster_alpha), bbox_inches = "tight")
+        # plt.close()
+
+        return fig
+
+
+def measure_lesions(data, image_id_col, x_id_col, y_id_col, clustering_id_col, class_id, plot = False, outdir = './plots', sample_name = 'sample'):
 
     ''' Function for measuring lesion size from a dataframe of cell coordinates.
 
@@ -177,13 +307,36 @@ def measure_lesions(data, image_id_col, x_id_col, y_id_col, clustering_id_col, c
                                 data, 
                                 x_id_col, 
                                 y_id_col, 
+                                sample_name,
                                 clustering_id_col,
                                 class_id, 
                                 outdir, 
                                 alphashape_param = 0.05)
         
     summary = clustered_data.groupby([image_id_col, 'lesion_id']).size().reset_index(name='cell_count')
+    
+    points = data[[x_id_col, y_id_col]].values
+    area = alphashape_area(points)
+    
+    summary['lobe_area'] = area
+    summary['total_cell_area'] = data['Cell: Area'].sum()
+    summary['total_lesions'] = len(summary)
+    summary['lesions_per_unit_lobe_area'] = (summary['total_lesions'][0] / summary['lobe_area'][0]) * 1e6
+    summary['lesions_per_unit_cell_area'] = (summary['total_lesions'][0] / summary['total_cell_area'][0]) * 1e6
     return summary
+
+def alphashape_area(points, 
+                    alphashape_param = 0.03):
+    '''
+    Function to calculate the area of a set of points with the alpha shape algorithm.
+    '''
+
+     # create alphashape:
+    print('Calculating alphashape...')
+    alpha_shape = alphashape.alphashape(points, alphashape_param)
+    area = alpha_shape.area
+    print('Done.')
+    return area
 
 def main(args):
 
