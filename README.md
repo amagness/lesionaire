@@ -43,17 +43,17 @@
 
 <br>
 
-## :dart: About ##
+## About ##
 
 Lesionaire is a small Python library for lesion size analysis and plotting with single cell spatial pathology data. The Lesionaire documentation is currently under development.
 
-## :sparkles: Features ##
+## Features ##
 
 :heavy_check_mark: Easily quantify lesion size in cell coordinate data;\
 :heavy_check_mark: Automatically determine boundaries of lesions;\
-:heavy_check_mark: Produce summaries and plots;
+:heavy_check_mark: Produce informative summaries and plots;
 
-## :white_check_mark: Requirements ##
+## Requirements ##
 
 Lesionaire requires 
 ```python
@@ -78,19 +78,34 @@ $ git clone https://github.com/amagness/lesionaire
 ## Usage ##
 
 ```python
+import lesionaire
+import pandas as pd
+import os
+
+# read in the data
 data = pd.read_csv('../data/test_data.txt', sep='\t')
 
-L = lesionData(data = data,
-                image_id_col = 'Image',
-                x_id_col = 'Centroid X µm',
-                y_id_col = 'Centroid Y µm',
-                clustering_id_col = 'Class',
-                class_id = 'Positive')
+# specify the column names for the x and y coordinates of the cells
+x = 'Centroid X µm'
+y = 'Centroid Y µm'
+# specify the column names for the clustering id, the cluster class, the image id and the cell area. If you have use QuPath to identify positive and negative cells in a whole slide image, these will be 'Class' and 'Positive' respectively.
+clustering_id_col = 'Class'
+cluster_class = 'Positive'
+image_id_col='Image' # if you have multiple images in your data file
+cell_area_col = 'Cell: Area' # if you have cell area data (optional)
 
-L.find_lesions()
+# create a lesionaire object
+lesions = lesionaire.lesionData(data, 
+                                x, 
+                                y, 
+                                clustering_id_col,, 
+                                cluster_class, 
+                                image_id_col = image_id_col, 
+                                cell_area_col = cell_area_col)
 
-lesion_fig = L.plot_lesions()
-lesion_fig.savefig('./plots/lesion_fig.png')
+imagename = os.path.split(f)[1].split('.')[0]
+lesions.plot_lesions(outdir='../plots', sample_name=imagename)
+
 ```
 
 ## License ##
@@ -98,8 +113,6 @@ lesion_fig.savefig('./plots/lesion_fig.png')
 This project is under license from MIT. For more details, see the [LICENSE](LICENSE.md) file.
 
 
-Made with :heart: by <a href="https://github.com/amagness" target="_blank">Alastair Magness</a> at the Francis Crick Institute.
+Lesionaire is developed by <a href="https://github.com/amagness" target="_blank">Alastair Magness</a> at the Francis Crick Institute.
 
-&#xa0;
 
-<a href="#top">Back to top</a>
